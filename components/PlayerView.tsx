@@ -129,15 +129,21 @@ const AttackModal: React.FC<{ character: Character, onAttack: (type: string, dam
     );
 };
 
-const PlayerActionsPanel: React.FC<{ character: Character, onUpdate: (char: Character) => void; dispatch: any; }> = ({ character, onUpdate, dispatch }) => {
+const PlayerActionsPanel: React.FC<{ character: Character, onUpdate: (char: Character) => void; dispatch: any; isMyTurn: boolean; }> = ({ character, onUpdate, dispatch, isMyTurn }) => {
     const [isAttackModalOpen, setIsAttackModalOpen] = useState(false);
     const isUnconscious = character.effects.some(effect => effect.name === 'Desmaiado');
+    const actionsDisabled = isUnconscious || !isMyTurn;
 
     const handleAction = (logMessage: string) => {
         onUpdate({ ...character, combatLog: [...character.combatLog, logMessage] });
     };
 
     const handleAttack = (type: string, damage: number, meta?: AttackMeta) => {
+        if (!isMyTurn) {
+            handleAction(`${character.name} tentou agir fora do próprio turno.`);
+            return;
+        }
+
         if (isUnconscious) {
             handleAction(`${character.name} está desmaiado e não pode agir.`);
             return;
@@ -185,12 +191,15 @@ const PlayerActionsPanel: React.FC<{ character: Character, onUpdate: (char: Char
     return (
         <div className="bg-gray-900 p-4 rounded-lg shadow-2xl border border-green-500 sticky top-24">
             <h3 className="text-lg font-bold text-green-400 mb-3 text-center">Ações Possíveis</h3>
+            {!isMyTurn && (
+                <p className="text-xs text-yellow-300 mb-2 text-center">Aguardando seu turno para agir.</p>
+            )}
             <div className="flex flex-col gap-2">
-                <button onClick={() => setIsAttackModalOpen(true)} className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-md text-white font-semibold transition disabled:bg-gray-600" disabled={character.actions.attacks <= 0 || isUnconscious}>
+                <button onClick={() => setIsAttackModalOpen(true)} className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-md text-white font-semibold transition disabled:bg-gray-600" disabled={character.actions.attacks <= 0 || actionsDisabled}>
                     Atacar ({character.actions.attacks}/{character.actions.totalAttacks})
                 </button>
-                <button onClick={() => handleAction(`${character.name} usa sua ação para se movimentar.`)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-white font-semibold transition disabled:bg-gray-600" disabled={isUnconscious}>Movimentar-se</button>
-                <button onClick={() => handleAction(`${character.name} tenta interagir com o cenário.`)} className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-md text-white font-semibold transition disabled:bg-gray-600" disabled={isUnconscious}>Interagir</button>
+                <button onClick={() => handleAction(`${character.name} usa sua ação para se movimentar.`)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-white font-semibold transition disabled:bg-gray-600" disabled={actionsDisabled}>Movimentar-se</button>
+                <button onClick={() => handleAction(`${character.name} tenta interagir com o cenário.`)} className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-md text-white font-semibold transition disabled:bg-gray-600" disabled={actionsDisabled}>Interagir</button>
             </div>
             {isUnconscious && <p className="text-xs text-red-300 mt-2 text-center">Desmaiado: sem ações por 3 turnos.</p>}
             {isAttackModalOpen && <AttackModal character={character} onAttack={handleAttack} onClose={() => setIsAttackModalOpen(false)} />}
@@ -235,7 +244,8 @@ const PlayerView: React.FC<PlayerViewProps> = ({ user, onLogout }) => {
     const character = useMemo(() => state.characters.find(c => c.playerId === user.id), [state.characters, user.id]);
 
     const isMyTurn = useMemo(() => {
-        if (state.turnOrder.length === 0 || !character) return false;
+        if (!character) return false;
+        if (state.turnOrder.length === 0) return true;
         return state.turnOrder[state.activeCharacterIndex] === character.id;
     }, [state.turnOrder, state.activeCharacterIndex, character]);
 
@@ -288,7 +298,7 @@ const PlayerView: React.FC<PlayerViewProps> = ({ user, onLogout }) => {
                         character={character}
                         isMasterView={false}
                         onUpdate={handleUpdateCharacter}
-                        actionsPanel={isMyTurn ? <PlayerActionsPanel character={character} onUpdate={handleUpdateCharacter} dispatch={dispatch} /> : null}
+                        actionsPanel={<PlayerActionsPanel character={character} onUpdate={handleUpdateCharacter} dispatch={dispatch} isMyTurn={isMyTurn} />}
                     />
                     <TestRequestModal character={character} onResolve={handleResolveTest} />
                 </>
