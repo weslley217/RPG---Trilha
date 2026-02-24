@@ -1,0 +1,5 @@
+{
+  "name": "Nen Aura RPG Sheet",
+  "description": "A dynamic RPG character sheet management application with an Aura system inspired by Nen. Features real-time controls, automated mathematical rules, and a Game Master administrative panel for a seamless role-playing experience.",
+  "requestFramePermissions": []
+}
