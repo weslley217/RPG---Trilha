@@ -117,6 +117,7 @@ const buildAuraExpandirTierEffects = (character: Character, affectedTargets: num
 const PendingAttacksViewer: React.FC<{ attackerId?: string; title?: string; showWhenEmpty?: boolean }> = ({ attackerId, title = 'Ataques Pendentes de Validação', showWhenEmpty = false }) => {
     const { state, dispatch } = useCharacterContext();
     const [validatedDamages, setValidatedDamages] = useState<Record<string, string>>({});
+    const [validationModes, setValidationModes] = useState<Record<string, 'pass' | 'block'>>({});
 
     const pendingAttacks = useMemo(() => {
         return state.characters.reduce((acc, char) => {
@@ -127,13 +128,23 @@ const PendingAttacksViewer: React.FC<{ attackerId?: string; title?: string; show
         }, [] as PendingAttack[]);
     }, [state.characters, attackerId]);
 
-    const handleValidation = (attackId: string) => {
-        const parsedDamage = parseInt(validatedDamages[attackId] || '0', 10);
-        const safeDamage = Number.isNaN(parsedDamage) ? 0 : Math.max(0, parsedDamage);
-        dispatch({ type: 'VALIDATE_ATTACK', payload: { attackId, validatedDamage: safeDamage } });
+    const handleValidation = (attack: PendingAttack) => {
+        const parsedDamage = parseInt(validatedDamages[attack.attackId] || '0', 10);
+        const safeInput = Number.isNaN(parsedDamage) ? 0 : Math.max(0, parsedDamage);
+        const mode = validationModes[attack.attackId] || 'pass';
+        const validatedDamage = mode === 'block'
+            ? Math.max(0, attack.baseDamage - safeInput)
+            : safeInput;
+
+        dispatch({ type: 'VALIDATE_ATTACK', payload: { attackId: attack.attackId, validatedDamage } });
         setValidatedDamages(prev => {
             const newState = { ...prev };
-            delete newState[attackId];
+            delete newState[attack.attackId];
+            return newState;
+        });
+        setValidationModes(prev => {
+            const newState = { ...prev };
+            delete newState[attack.attackId];
             return newState;
         });
     };
@@ -151,12 +162,21 @@ const PendingAttacksViewer: React.FC<{ attackerId?: string; title?: string; show
             <div className="space-y-4">
                 {pendingAttacks.map(attack => {
                     const attacker = state.characters.find(c => c.id === attack.attackerId);
-                    const parsedValidatedDamage = parseInt(validatedDamages[attack.attackId] || '0', 10);
-                    const previewValidatedDamage = Number.isNaN(parsedValidatedDamage) ? 0 : Math.max(0, parsedValidatedDamage);
+                    const mode = validationModes[attack.attackId] || 'pass';
+                    const parsedInputValue = parseInt(validatedDamages[attack.attackId] || '0', 10);
+                    const safeInputValue = Number.isNaN(parsedInputValue) ? 0 : Math.max(0, parsedInputValue);
+
+                    const previewValidatedBaseDamage = mode === 'block'
+                        ? Math.max(0, attack.baseDamage - safeInputValue)
+                        : safeInputValue;
+                    const previewBlockedDamage = mode === 'block'
+                        ? Math.min(attack.baseDamage, safeInputValue)
+                        : Math.max(0, attack.baseDamage - previewValidatedBaseDamage);
+
                     const paradoxBonus = attack.hasParadoxBuff && attack.weaponId
-                        ? Rules.calculateParadoxValidationBonus(previewValidatedDamage, attack.weaponId)
+                        ? Rules.calculateParadoxValidationBonus(previewValidatedBaseDamage, attack.weaponId)
                         : 0;
-                    const previewFinalDamage = previewValidatedDamage + paradoxBonus;
+                    const previewFinalDamage = previewValidatedBaseDamage + paradoxBonus;
 
                     return (
                         <div key={attack.attackId} className="bg-gray-900 p-3 rounded-md flex flex-col sm:flex-row justify-between sm:items-center gap-4">
@@ -166,6 +186,10 @@ const PendingAttacksViewer: React.FC<{ attackerId?: string; title?: string; show
                                 {attack.hitCount && attack.hitCount > 1 && (
                                     <p className="text-xs text-cyan-300">Instâncias de dano: {attack.hitCount}</p>
                                 )}
+                                <p className="text-xs text-gray-300">
+                                    Preview: bloqueado {previewBlockedDamage} | passa {previewValidatedBaseDamage}
+                                    {paradoxBonus > 0 ? ` | bônus paradoxo +${paradoxBonus}` : ''} | final {previewFinalDamage}
+                                </p>
                                 {attack.hasParadoxBuff && attack.weaponId && (
                                     <p className="text-xs text-yellow-400">
                                         Bônus Paradoxo (arma {attack.weaponId}): +{paradoxBonus} | Dano final previsto: {previewFinalDamage}
@@ -173,16 +197,24 @@ const PendingAttacksViewer: React.FC<{ attackerId?: string; title?: string; show
                                 )}
                             </div>
                             <div className="flex items-center gap-2">
+                                <select
+                                    value={mode}
+                                    onChange={(e) => setValidationModes(prev => ({ ...prev, [attack.attackId]: e.target.value as 'pass' | 'block' }))}
+                                    className="p-2 bg-gray-700 rounded-md text-sm"
+                                >
+                                    <option value="pass">Dano que passa</option>
+                                    <option value="block">Dano bloqueado</option>
+                                </select>
                                 <input
                                     type="number"
                                     value={validatedDamages[attack.attackId] || ''}
                                     min={0}
                                     onChange={(e) => setValidatedDamages(prev => ({ ...prev, [attack.attackId]: e.target.value }))}
-                                    placeholder="Dano base efetivo"
+                                    placeholder={mode === 'block' ? 'Quanto bloquear' : 'Quanto passa'}
                                     className="w-32 p-2 bg-gray-700 rounded-md"
                                 />
                                 <button
-                                    onClick={() => handleValidation(attack.attackId)}
+                                    onClick={() => handleValidation(attack)}
                                     className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-md font-semibold transition"
                                 >
                                     Validar
@@ -1236,12 +1268,36 @@ const MasterControls: React.FC<{ character: Character; onUpdate: (char: Characte
             {character.ozyState && (
                 <div className="bg-gray-800 p-4 rounded-lg border border-cyan-700 space-y-3">
                     <h3 className="text-lg font-bold text-cyan-300">Aura Expandir / Ego (Ozymandias)</h3>
+                    <p className="text-xs text-cyan-100/80">
+                        Preencha os campos com os valores da cena: quantidades na área, corte da intimidação e alvos afetados.
+                        Isso alimenta os efeitos automáticos da Aura Expandir e do Ego.
+                    </p>
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
-                        <input type="number" value={ozyAlliesInArea} onChange={e => setOzyAlliesInArea(parseInt(e.target.value) || 0)} className="p-2 bg-gray-700 rounded-md text-sm" placeholder="Aliados na área" />
-                        <input type="number" value={ozyEnemiesInArea} onChange={e => setOzyEnemiesInArea(parseInt(e.target.value) || 0)} className="p-2 bg-gray-700 rounded-md text-sm" placeholder="Inimigos na área" />
-                        <input type="number" value={ozyIntimidationThreshold} onChange={e => setOzyIntimidationThreshold(parseInt(e.target.value) || 0)} className="p-2 bg-gray-700 rounded-md text-sm" placeholder="Corte intimidação" />
-                        <input type="number" value={ozyIntimidatedTargets} onChange={e => setOzyIntimidatedTargets(parseInt(e.target.value) || 0)} className="p-2 bg-gray-700 rounded-md text-sm" placeholder="Alvos afetados" />
-                        <input type="number" value={ozyEgoTargets} onChange={e => setOzyEgoTargets(parseInt(e.target.value) || 0)} className="p-2 bg-gray-700 rounded-md text-sm" placeholder="Alvos para Ego" />
+                        <div className="space-y-1">
+                            <label className="text-xs text-cyan-200">Aliados na área</label>
+                            <input type="number" value={ozyAlliesInArea} onChange={e => setOzyAlliesInArea(parseInt(e.target.value) || 0)} className="w-full p-2 bg-gray-700 rounded-md text-sm" placeholder="Qtd de aliados no alcance" />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs text-cyan-200">Inimigos na área</label>
+                            <input type="number" value={ozyEnemiesInArea} onChange={e => setOzyEnemiesInArea(parseInt(e.target.value) || 0)} className="w-full p-2 bg-gray-700 rounded-md text-sm" placeholder="Qtd de inimigos no alcance" />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs text-cyan-200">Corte de intimidação</label>
+                            <input type="number" value={ozyIntimidationThreshold} onChange={e => setOzyIntimidationThreshold(parseInt(e.target.value) || 0)} className="w-full p-2 bg-gray-700 rounded-md text-sm" placeholder="Total do teste do Ozy" />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs text-cyan-200">Alvos intimidados</label>
+                            <input type="number" value={ozyIntimidatedTargets} onChange={e => setOzyIntimidatedTargets(parseInt(e.target.value) || 0)} className="w-full p-2 bg-gray-700 rounded-md text-sm" placeholder="Falharam no corte" />
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-xs text-cyan-200">Alvos para Ego</label>
+                            <input type="number" value={ozyEgoTargets} onChange={e => setOzyEgoTargets(parseInt(e.target.value) || 0)} className="w-full p-2 bg-gray-700 rounded-md text-sm" placeholder="Qtd drenada por turno" />
+                        </div>
+                    </div>
+                    <div className="text-xs text-cyan-100/70 space-y-1">
+                        <p><span className="font-semibold">Corte de intimidação:</span> valor mínimo que cada alvo deve superar no teste de Resistência (Espírito).</p>
+                        <p><span className="font-semibold">Alvos intimidados:</span> usados para aplicar os tiers da 3ª conjuração e os debuffs da 2ª conjuração.</p>
+                        <p><span className="font-semibold">Alvos para Ego:</span> quantidade usada no dreno por turno (Ego passivo ou Aura + Ego).</p>
                     </div>
                     <div className="bg-gray-900 p-3 rounded-md">
                         <p className="text-sm text-cyan-200 mb-2">Alvos que recebem os efeitos da 2ª conjuração:</p>
