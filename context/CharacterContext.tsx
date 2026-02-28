@@ -37,6 +37,7 @@ type CharacterContextType = {
     dispatch: React.Dispatch<Action>;
     isHydrated: boolean;
     syncError: string | null;
+    persistStateNow: (nextState?: PersistedAppState) => Promise<void>;
 };
 
 const CharacterContext = createContext<CharacterContextType | undefined>(undefined);
@@ -532,7 +533,16 @@ export const CharacterProvider: React.FC<{ children: ReactNode }> = ({ children 
             const mergedTechniques = [...normalizedTechniques, ...missingTemplateTechniques];
 
             return {
+                ...(templateCharacter || {}),
                 ...character,
+                attributes: {
+                    ...(templateCharacter?.attributes || {}),
+                    ...(character.attributes || {}),
+                },
+                proficiencies: {
+                    ...(templateCharacter?.proficiencies || {}),
+                    ...(character.proficiencies || {}),
+                },
                 techniques: mergedTechniques,
                 pendingAttack: character.pendingAttack || null,
                 tavernDailyInteractionsUsed: Math.max(0, character.tavernDailyInteractionsUsed || 0),
@@ -540,6 +550,16 @@ export const CharacterProvider: React.FC<{ children: ReactNode }> = ({ children 
                 tavernLastInteractionRound: typeof character.tavernLastInteractionRound === 'number' ? character.tavernLastInteractionRound : -1,
                 pendingTavernSellRequest: character.pendingTavernSellRequest || null,
                 activeTavernMissionId: character.activeTavernMissionId || null,
+                age: character.age ?? templateCharacter?.age ?? '',
+                backstory: character.backstory ?? templateCharacter?.backstory ?? '',
+                motivations: character.motivations ?? templateCharacter?.motivations ?? '',
+                inventory: character.inventory ?? templateCharacter?.inventory ?? '',
+                wealth: typeof character.wealth === 'number' ? character.wealth : (templateCharacter?.wealth ?? 0),
+                imageUrl: character.imageUrl ?? templateCharacter?.imageUrl,
+                maxAuraMasterBonus: character.maxAuraMasterBonus || 0,
+                maxHealthMasterBonus: character.maxHealthMasterBonus || 0,
+                maxAuraPermanentBonus: character.maxAuraPermanentBonus || 0,
+                maxHealthPermanentBonus: character.maxHealthPermanentBonus || 0,
                 paradoxState: character.paradoxState
                     ? { ...character.paradoxState, preparedExtraShots: character.paradoxState.preparedExtraShots || 0 }
                     : character.paradoxState,
@@ -629,8 +649,27 @@ export const CharacterProvider: React.FC<{ children: ReactNode }> = ({ children 
         };
     }, [state, isHydrated]);
 
+    const persistStateNow = async (nextState?: PersistedAppState): Promise<void> => {
+        if (saveTimeoutRef.current) {
+            window.clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
+        }
+
+        const stateToPersist = nextState || state;
+
+        try {
+            await saveCampaignState(stateToPersist);
+            setSyncError(null);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Erro ao sincronizar estado da campanha no Supabase.';
+            console.error(message);
+            setSyncError(message);
+            throw error;
+        }
+    };
+
     return (
-        <CharacterContext.Provider value={{ state, dispatch, isHydrated, syncError }}>
+        <CharacterContext.Provider value={{ state, dispatch, isHydrated, syncError, persistStateNow }}>
             {children}
         </CharacterContext.Provider>
     );

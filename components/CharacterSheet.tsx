@@ -15,6 +15,8 @@ import {
 import { useCharacterContext } from '../context/CharacterContext';
 import { uploadCharacterImage } from '../services/imageUpload';
 
+const BOSE_WEAPON_ID = 10;
+
 const createEffectForTechnique = (technique: Technique, character: Character): Effect | null => {
     const effectBase = { id: `${technique.name}_${Date.now()}`, name: `${technique.name} Ativo`, type: EffectType.Buff };
 
@@ -56,7 +58,7 @@ const createEffectForTechnique = (technique: Technique, character: Character): E
 
 const createParadoxEffect = (weapon: Equipment, outcome: 'correct' | 'incorrect'): Effect => {
     let duration = 3;
-    if (weapon.id === 10) duration = 3;
+    if (weapon.id === BOSE_WEAPON_ID) duration = 3;
     if (weapon.id === 7) duration = 3;
 
     const base = { id: `paradox_${weapon.id}_${Date.now()}`, duration };
@@ -69,7 +71,7 @@ const createParadoxEffect = (weapon: Equipment, outcome: 'correct' | 'incorrect'
                  return { ...base, name: 'Força Aumentada (Glaive)', type: EffectType.Buff, target: Attribute.Corpo, value: 10 };
             case 2:
                  return { ...base, name: 'Ataque Triplo (Bidente)', type: EffectType.Buff, target: 'TotalAttacks', value: 3 };
-            case 10:
+            case BOSE_WEAPON_ID:
                  return { ...base, name: 'Condensado Ativo', type: EffectType.Buff, target: 'AllStats', value: 15 }; // Special handling needed
             case 7:
                 return { ...base, name: 'Armadura Ativa', type: EffectType.Buff, target: 'AllStats', value: 10 }; // Special
@@ -102,6 +104,22 @@ const createDefaultParadoxState = (): ParadoxState => ({
     selectedEquipment: null,
     preparedExtraShots: 0,
 });
+
+const removeParadoxWeaponEffects = (effects: Effect[], weapon: Equipment | null | undefined): Effect[] => {
+    if (!weapon) {
+        return effects;
+    }
+
+    const paradoxEffectPrefix = `paradox_${weapon.id}_`;
+    const neutralWeaponName = `${weapon.name} (Neutro)`;
+
+    return effects.filter(effect => {
+        if (effect.id.startsWith(paradoxEffectPrefix)) return false;
+        if (effect.id.startsWith('paradox_drain_') && effect.name === neutralWeaponName) return false;
+        if (effect.name === neutralWeaponName) return false;
+        return true;
+    });
+};
 
 const removeNamedEffectPrefixes = (effects: Effect[], prefixes: string[]): Effect[] => {
     return effects.filter(effect => !prefixes.some(prefix => effect.name.startsWith(prefix)));
@@ -279,8 +297,8 @@ const TECHNIQUE_COPY: Record<string, { quick: string; full: string }> = {
         full: 'En projeta a aura em area para mapear o entorno em tempo real. Quanto maior o raio, maior o consumo de aura, mas tambem maior a capacidade de detectar usuarios, objetos e alteracoes no campo.'
     },
     'Paradoxo do Conjurador': {
-        quick: 'Conjura 1 de 10 armas com pergunta de fisica. Acerto = buff, erro = debuff, sem resposta = arma neutra com dreno e custo dobrado no proximo uso neutro.',
-        full: 'Ao ativar, uma arma e sorteada e o usuario responde uma pergunta teorica de fisica. Acertar concede buff da arma sorteada; errar aplica debuff correspondente. Se nao responder, recebe arma no estado neutro (mais forte que arma fisica comum), com dreno continuo de aura e penalidade de custo dobrado no proximo uso em estado neutro.'
+        quick: 'Sorteia 1 de 10 armas. A resposta e validada presencialmente, e o proprio usuario marca se acertou ou errou para aplicar buff ou debuff.',
+        full: 'Ao ativar, uma arma e sorteada. A interacao da pergunta acontece fora do painel, e o proprio usuario marca no modal se acertou ou errou para aplicar imediatamente o buff ou debuff correspondente. Pelo grimorio, tambem e possivel ativar qualquer arma listada diretamente ja com o buff ativo.'
     },
     'Equação do Destino': {
         quick: 'Inverte a balanca do Paradoxo 1x: pode negar o proprio buff/debuff e transferir o resultado oposto ao adversario.',
@@ -327,14 +345,39 @@ const TECHNIQUE_COLUMNS = [
 ];
 
 const CharacterHeader: React.FC<{ character: Character, isMasterView: boolean, onUpdate: (char: Character) => void }> = ({ character, isMasterView, onUpdate }) => {
+    const { state, persistStateNow } = useCharacterContext();
     const [details, setDetails] = useState({ age: character.age, backstory: character.backstory, motivations: character.motivations, inventory: character.inventory, wealth: character.wealth });
     const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
     const [isUploadingImage, setIsUploadingImage] = useState(false);
     const [imageUploadError, setImageUploadError] = useState('');
+    const [isSavingDetails, setIsSavingDetails] = useState(false);
+    const [detailsSaveMessage, setDetailsSaveMessage] = useState('');
     const imageFileInputRef = useRef<HTMLInputElement | null>(null);
-    useEffect(() => { setDetails({ age: character.age, backstory: character.backstory, motivations: character.motivations, inventory: character.inventory, wealth: character.wealth }); }, [character]);
+    useEffect(() => {
+        setDetails({ age: character.age, backstory: character.backstory, motivations: character.motivations, inventory: character.inventory, wealth: character.wealth });
+        setDetailsSaveMessage('');
+    }, [character.id, character.age, character.backstory, character.motivations, character.inventory, character.wealth]);
     
-    const handleSave = () => { onUpdate({ ...character, ...details }); };
+    const handleSave = async () => {
+        const updatedCharacter = { ...character, ...details };
+        const nextCharacters = state.characters.map(currentCharacter =>
+            currentCharacter.id === character.id ? updatedCharacter : currentCharacter
+        );
+
+        setIsSavingDetails(true);
+        setDetailsSaveMessage('');
+        onUpdate(updatedCharacter);
+
+        try {
+            await persistStateNow({ ...state, characters: nextCharacters });
+            setDetailsSaveMessage('Detalhes salvos no Supabase.');
+        } catch (error) {
+            setDetailsSaveMessage(error instanceof Error ? error.message : 'Falha ao salvar detalhes no Supabase.');
+        } finally {
+            setIsSavingDetails(false);
+        }
+    };
+
     const handleChange = (field: keyof typeof details, value: string | number) => { setDetails(prev => ({ ...prev, [field]: value })); };
 
     const handleUploadCharacterImage = async () => {
@@ -380,11 +423,20 @@ const CharacterHeader: React.FC<{ character: Character, isMasterView: boolean, o
                     <label className="font-bold text-green-400 block mb-1">Motivações</label>
                     <textarea value={details.motivations} onChange={e => handleChange('motivations', e.target.value)} disabled={isMasterView} className="w-full p-2 bg-gray-700 rounded-md disabled:bg-gray-800" rows={3}/>
                  </div>
-                 <div>
+                <div>
                     <label className="font-bold text-green-400 block mb-1">Inventário</label>
                     <textarea value={details.inventory} onChange={e => handleChange('inventory', e.target.value)} disabled={isMasterView} className="w-full p-2 bg-gray-700 rounded-md disabled:bg-gray-800" rows={4}/>
                 </div>
-                {!isMasterView && <button onClick={handleSave} className="w-full mt-2 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-white font-semibold transition">Salvar Detalhes</button>}
+                {!isMasterView && (
+                    <>
+                        <button onClick={handleSave} disabled={isSavingDetails} className="w-full mt-2 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-white font-semibold transition disabled:bg-gray-700">
+                            {isSavingDetails ? 'Salvando...' : 'Salvar Detalhes'}
+                        </button>
+                        {detailsSaveMessage && (
+                            <p className={`text-xs ${detailsSaveMessage.includes('Falha') ? 'text-red-400' : 'text-emerald-300'}`}>{detailsSaveMessage}</p>
+                        )}
+                    </>
+                )}
             </div>
              <div className="w-full md:w-1/3 lg:w-1/4">
                 <img src={character.imageUrl || 'https://via.placeholder.com/400x600?text=Sem+Imagem'} alt="Imagem do Personagem" className="w-full h-auto object-cover rounded-lg bg-gray-700 aspect-[2/3]"/>
@@ -421,7 +473,6 @@ const CharacterHeader: React.FC<{ character: Character, isMasterView: boolean, o
 
 const ParadoxModal: React.FC<{ character: Character, onUpdate: (char: Character) => void }> = ({ character, onUpdate }) => {
     const { state: { equipment: equipmentList } } = useCharacterContext();
-    const [answer, setAnswer] = useState('');
     const [scrolledItem, setScrolledItem] = useState<Equipment>(equipmentList[0]);
     const [isSelecting, setIsSelecting] = useState(true);
     const [finalWeapon, setFinalWeapon] = useState<Equipment | null>(null);
@@ -439,7 +490,7 @@ const ParadoxModal: React.FC<{ character: Character, onUpdate: (char: Character)
             setIsSelecting(false);
 
             if (character.paradoxState) {
-                const updatedParadox: ParadoxState = { ...character.paradoxState, question: selected.question || 'O Mestre não definiu uma pergunta para esta arma.', selectedEquipment: selected };
+                const updatedParadox: ParadoxState = { ...character.paradoxState, question: selected.question || '', selectedEquipment: selected };
                 onUpdate({ ...character, paradoxState: updatedParadox });
             }
         }, 5000);
@@ -450,26 +501,15 @@ const ParadoxModal: React.FC<{ character: Character, onUpdate: (char: Character)
     const handleClose = (cancel: boolean = false) => {
         if (!character.paradoxState) return;
         const updatedParadox: ParadoxState = { ...character.paradoxState, isActive: false, selectedEquipment: cancel ? null : character.paradoxState.selectedEquipment };
-        const logMessage = cancel ? "Paradoxo do Conjurador foi cancelado." : `Arma ${character.paradoxState.selectedEquipment?.name} recebida. Aguardando validação do Mestre.`;
+        const logMessage = cancel ? "Paradoxo do Conjurador foi cancelado." : `Arma ${character.paradoxState.selectedEquipment?.name} recebida.`;
         onUpdate({ ...character, paradoxState: updatedParadox, combatLog: [...character.combatLog, logMessage] });
     };
 
-    const handleSubmit = (playerChoice: 'answer' | 'no_answer') => {
+    const handleSubmit = (outcome: 'correct' | 'incorrect') => {
         if (!character.paradoxState || isSelecting || !finalWeapon) return;
 
-        let logMessage = `Paradoxo invocou: ${finalWeapon.name}.`;
-        let outcome: ParadoxState['outcome'] = 'pending';
-        let newPlayerAnswer: string | null = null;
-        let isActive = false;
-
-        if (playerChoice === 'answer') {
-            logMessage += ` Jogador respondeu: "${answer}". Aguardando julgamento do Mestre.`;
-            newPlayerAnswer = answer;
-        } else {
-            logMessage += ` Jogador não respondeu. Recebeu a arma em estado neutro.`;
-            outcome = 'no_answer';
-        }
-        const updatedParadox: ParadoxState = { ...character.paradoxState, playerAnswer: newPlayerAnswer, outcome, selectedEquipment: finalWeapon, isActive };
+        const logMessage = `Paradoxo invocou: ${finalWeapon.name}. ${outcome === 'correct' ? 'Jhuan marcou a resposta como correta.' : 'Jhuan marcou a resposta como incorreta.'}`;
+        const updatedParadox: ParadoxState = { ...character.paradoxState, playerAnswer: null, outcome, selectedEquipment: finalWeapon, isActive: false };
         onUpdate({ ...character, paradoxState: updatedParadox, combatLog: [...character.combatLog, logMessage] });
     };
     
@@ -479,13 +519,21 @@ const ParadoxModal: React.FC<{ character: Character, onUpdate: (char: Character)
     return (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
             <div className="bg-gray-900 p-8 rounded-lg shadow-2xl border border-yellow-500 text-center w-full max-w-3xl relative">
-                 <button onClick={() => handleClose(true)} className="absolute top-4 right-4 text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
+                <button onClick={() => handleClose(true)} className="absolute top-4 right-4 text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
                 <h2 className="text-2xl font-bold text-yellow-400 mb-4">Paradoxo do Conjurador</h2>
                 {displayItem && ( <div className="bg-gray-800 p-4 rounded-lg mb-4 text-left"><div className="flex items-center gap-4"><img src={displayItem.imageUrl} alt={displayItem.name} className="h-24 w-24 object-cover rounded-md bg-gray-700"/><div><h3 className="text-2xl font-bold text-white">{displayItem.name}</h3><p className="text-sm text-gray-400">{displayItem.description}</p><p className="text-sm mt-2"><strong className="text-green-400">Buff:</strong> {displayItem.buff}</p><p className="text-sm"><strong className="text-red-400">Debuff:</strong> {displayItem.debuff}</p></div></div></div> )}
-                <p className="text-lg mb-2 text-gray-300">Pergunta do Mestre:</p>
-                <p className="text-xl italic text-white bg-gray-800 p-3 rounded-md mb-6 min-h-[50px]">{character.paradoxState.question || "..."}</p>
                 {isSelecting && <div className="text-yellow-400">Sorteando arma...</div>}
-                {!isSelecting && ( <> <input type="text" value={answer} onChange={e => setAnswer(e.target.value)} placeholder="Sua resposta..." className="w-full p-3 mb-4 text-gray-200 bg-gray-800 rounded-md focus:outline-none focus:ring-2 focus:ring-yellow-500 border border-gray-700"/> <div className="flex gap-4 justify-center"> <button onClick={() => handleSubmit('answer')} className="px-6 py-3 font-bold text-white bg-green-600 rounded-md hover:bg-green-700 transition">Responder</button> <button onClick={() => handleSubmit('no_answer')} className="px-6 py-3 font-bold text-white bg-gray-600 rounded-md hover:bg-gray-700 transition">Não Responder</button> </div> </> )}
+                {!isSelecting && (
+                    <>
+                        <p className="text-sm text-gray-300 mb-4">
+                            A resposta sera validada presencialmente. Marque abaixo o resultado para aplicar o efeito da arma sorteada.
+                        </p>
+                        <div className="flex gap-4 justify-center">
+                            <button onClick={() => handleSubmit('correct')} className="px-6 py-3 font-bold text-white bg-green-600 rounded-md hover:bg-green-700 transition">Acertou a Resposta</button>
+                            <button onClick={() => handleSubmit('incorrect')} className="px-6 py-3 font-bold text-white bg-red-600 rounded-md hover:bg-red-700 transition">Errou a Resposta</button>
+                        </div>
+                    </>
+                )}
             </div>
         </div>
     );
@@ -700,19 +748,13 @@ const BoseWeaponSelectionModal: React.FC<{ equipmentList: Equipment[]; onSelect:
 const ActiveParadoxWeapon: React.FC<{ weapon: Equipment, character: Character, onUpdate: (c: Character) => void }> = ({ weapon, character, onUpdate }) => {
     const handleRemoveWeapon = () => {
         if (!character.paradoxState) return;
+        const isChosenByBose = character.paradoxState.chosenBoseWeaponId === weapon.id;
+        const boseWeapon = PARADOX_EQUIPMENT.find(item => item.id === BOSE_WEAPON_ID);
+        let cleanedEffects = removeParadoxWeaponEffects(character.effects, weapon);
 
-        const cleanedEffects = character.effects.filter(effect => {
-            if (effect.id.startsWith('paradox_drain_')) return false;
-            if (effect.name === `${weapon.name} Buff`) return false;
-            if (effect.name === `${weapon.name} Debuff`) return false;
-            if (effect.name === `${weapon.name} (Neutro)`) return false;
-            if (weapon.id === 2 && effect.name === 'Ataque Triplo (Bidente)') return false;
-            if (weapon.id === 3 && ['Força Aumentada (Glaive)', 'Turno Perdido (Glaive)'].includes(effect.name)) return false;
-            if (weapon.id === 6 && ['Dano Dobrado (Chicote)', 'Dreno de Aura (Chicote)'].includes(effect.name)) return false;
-            if (weapon.id === 7 && ['Armadura Ativa', 'Imobilizado (Armadura)'].includes(effect.name)) return false;
-            if (weapon.id === 10 && effect.name === 'Condensado Ativo') return false;
-            return true;
-        });
+        if (isChosenByBose && boseWeapon) {
+            cleanedEffects = removeParadoxWeaponEffects(cleanedEffects, boseWeapon);
+        }
 
         onUpdate({
             ...character,
@@ -722,7 +764,7 @@ const ActiveParadoxWeapon: React.FC<{ weapon: Equipment, character: Character, o
                 selectedEquipment: null,
                 activeNeutralWeapon: false,
                 preparedExtraShots: 0,
-                chosenBoseWeaponId: character.paradoxState.chosenBoseWeaponId === weapon.id
+                chosenBoseWeaponId: isChosenByBose
                     ? undefined
                     : character.paradoxState.chosenBoseWeaponId,
             },
@@ -1575,6 +1617,39 @@ const CharacterSheet: React.FC<{ character: Character; isMasterView: boolean; on
         setIsBoseModalOpen(false);
     };
 
+    const handleUseGrimoireWeapon = (weapon: Equipment) => {
+        if (!onUpdate) return;
+
+        const currentWeapon = character.paradoxState?.selectedEquipment;
+        const isChosenByBose = character.paradoxState?.chosenBoseWeaponId === currentWeapon?.id;
+        const boseWeapon = paradoxEquipmentList.find(item => item.id === BOSE_WEAPON_ID);
+        let cleanedEffects = removeParadoxWeaponEffects(character.effects, currentWeapon);
+
+        if (isChosenByBose && boseWeapon) {
+            cleanedEffects = removeParadoxWeaponEffects(cleanedEffects, boseWeapon);
+        }
+
+        const baseParadoxState = character.paradoxState || createDefaultParadoxState();
+
+        onUpdate({
+            ...character,
+            effects: cleanedEffects,
+            paradoxState: {
+                ...baseParadoxState,
+                isActive: false,
+                question: weapon.question || '',
+                playerAnswer: null,
+                outcome: 'correct',
+                activeNeutralWeapon: false,
+                nextUseCostDoubled: false,
+                selectedEquipment: weapon,
+                chosenBoseWeaponId: undefined,
+                preparedExtraShots: 0,
+            },
+            combatLog: [...character.combatLog, `${character.name} ativou ${weapon.name} pelo Grimorio com buff ativo.`]
+        });
+    };
+
     useEffect(() => {
         if (!onUpdate || !character.paradoxState || !character.paradoxState.outcome || character.paradoxState.outcome === 'pending') return;
         
@@ -1658,6 +1733,10 @@ const CharacterSheet: React.FC<{ character: Character; isMasterView: boolean; on
 
     const maxAura = Rules.calculateMaxAura(character);
     const maxHealth = Rules.calculateMaxHealth(character);
+    const activeParadoxWeaponId = character.paradoxState?.selectedEquipment?.id;
+    const mitigatedPhysicalDamage = Rules.calculateDamageReduction(character, 'Physical').totalReduction;
+    const mitigatedAuraDamage = Rules.calculateDamageReduction(character, 'Aura').totalReduction;
+    const activeMitigationBonus = Rules.getActiveDamageReductionBonus(character);
 
     return (
         <div className="space-y-6">
@@ -1673,6 +1752,29 @@ const CharacterSheet: React.FC<{ character: Character; isMasterView: boolean; on
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <StatBar label="Vida" value={character.currentHealth} max={maxHealth} color="text-red-500" isMasterView={isMasterView} onValueChange={(v) => handleUpdate('currentHealth', v)} />
                 <StatBar label="Aura" value={character.currentAura} max={maxAura} color="text-yellow-400" isMasterView={isMasterView} onValueChange={(v) => handleUpdate('currentAura', v)} />
+            </div>
+
+            <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h3 className="text-xl font-bold text-cyan-300">Dano Mitigado</h3>
+                        <p className="text-xs text-gray-400">Resumo da mitigação atual por resistências, aura e efeitos defensivos ativos.</p>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                        <div className="bg-gray-900 px-4 py-3 rounded-md border border-gray-700 min-w-[8rem]">
+                            <span className="block text-gray-400">Físico</span>
+                            <span className="text-xl font-bold text-white">{mitigatedPhysicalDamage}</span>
+                        </div>
+                        <div className="bg-gray-900 px-4 py-3 rounded-md border border-gray-700 min-w-[8rem]">
+                            <span className="block text-gray-400">Aura</span>
+                            <span className="text-xl font-bold text-white">{mitigatedAuraDamage}</span>
+                        </div>
+                        <div className="bg-gray-900 px-4 py-3 rounded-md border border-gray-700 min-w-[8rem]">
+                            <span className="block text-gray-400">Bônus Ativos</span>
+                            <span className="text-xl font-bold text-white">{activeMitigationBonus > 0 ? `+${activeMitigationBonus}` : activeMitigationBonus}</span>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
@@ -2131,9 +2233,10 @@ const CharacterSheet: React.FC<{ character: Character; isMasterView: boolean; on
                     </button>
                     {isParadoxGrimoireOpen && (
                         <div className="mt-4 space-y-2">
-                            <p className="text-xs text-gray-400">Clique no nome da arma para ver imagem, efeito, buff e debuff. (Perguntas do mestre permanecem ocultas.)</p>
+                            <p className="text-xs text-gray-400">Clique no nome da arma para ver imagem, efeito, buff e debuff. Tambem e possivel ativar diretamente a arma escolhida com buff.</p>
                             {paradoxEquipmentList.map(weapon => {
                                 const isExpanded = Boolean(expandedGrimoireWeapons[weapon.id]);
+                                const isActiveWeapon = activeParadoxWeaponId === weapon.id;
                                 return (
                                     <div key={weapon.id} className="bg-gray-900 rounded-md border border-gray-700">
                                         <button
@@ -2156,6 +2259,14 @@ const CharacterSheet: React.FC<{ character: Character; isMasterView: boolean; on
                                                         <p><span className="text-green-300 font-semibold">Buff:</span> {weapon.buff}</p>
                                                         <p><span className="text-red-300 font-semibold">Debuff:</span> {weapon.debuff}</p>
                                                     </div>
+                                                </div>
+                                                <div className="mt-3 flex justify-end">
+                                                    <button
+                                                        onClick={() => handleUseGrimoireWeapon(weapon)}
+                                                        className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-md text-sm font-semibold transition"
+                                                    >
+                                                        {isActiveWeapon ? 'Reativar esta arma' : 'Usar esta arma'}
+                                                    </button>
                                                 </div>
                                             </div>
                                         )}

@@ -129,21 +129,16 @@ const AttackModal: React.FC<{ character: Character, onAttack: (type: string, dam
     );
 };
 
-const PlayerActionsPanel: React.FC<{ character: Character, onUpdate: (char: Character) => void; dispatch: any; isMyTurn: boolean; }> = ({ character, onUpdate, dispatch, isMyTurn }) => {
+const PlayerActionsPanel: React.FC<{ character: Character, onUpdate: (char: Character) => void; dispatch: any; }> = ({ character, onUpdate, dispatch }) => {
     const [isAttackModalOpen, setIsAttackModalOpen] = useState(false);
     const isUnconscious = character.effects.some(effect => effect.name === 'Desmaiado');
-    const actionsDisabled = isUnconscious || !isMyTurn;
+    const actionsDisabled = isUnconscious;
 
     const handleAction = (logMessage: string) => {
         onUpdate({ ...character, combatLog: [...character.combatLog, logMessage] });
     };
 
     const handleAttack = (type: string, damage: number, meta?: AttackMeta) => {
-        if (!isMyTurn) {
-            handleAction(`${character.name} tentou agir fora do próprio turno.`);
-            return;
-        }
-
         if (isUnconscious) {
             handleAction(`${character.name} está desmaiado e não pode agir.`);
             return;
@@ -191,9 +186,6 @@ const PlayerActionsPanel: React.FC<{ character: Character, onUpdate: (char: Char
     return (
         <div className="bg-gray-900 p-4 rounded-lg shadow-2xl border border-green-500 sticky top-24">
             <h3 className="text-lg font-bold text-green-400 mb-3 text-center">Ações Possíveis</h3>
-            {!isMyTurn && (
-                <p className="text-xs text-yellow-300 mb-2 text-center">Aguardando seu turno para agir.</p>
-            )}
             <div className="flex flex-col gap-2">
                 <button onClick={() => setIsAttackModalOpen(true)} className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-md text-white font-semibold transition disabled:bg-gray-600" disabled={character.actions.attacks <= 0 || actionsDisabled}>
                     Atacar ({character.actions.attacks}/{character.actions.totalAttacks})
@@ -298,7 +290,7 @@ const PlayerView: React.FC<PlayerViewProps> = ({ user, onLogout }) => {
                         character={character}
                         isMasterView={false}
                         onUpdate={handleUpdateCharacter}
-                        actionsPanel={<PlayerActionsPanel character={character} onUpdate={handleUpdateCharacter} dispatch={dispatch} isMyTurn={isMyTurn} />}
+                        actionsPanel={<PlayerActionsPanel character={character} onUpdate={handleUpdateCharacter} dispatch={dispatch} />}
                     />
                     <TestRequestModal character={character} onResolve={handleResolveTest} />
                 </>

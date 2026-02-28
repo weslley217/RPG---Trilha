@@ -94,7 +94,7 @@ export const PARADOX_EQUIPMENT: Equipment[] = [
 ];
 
 const JHUAN_TECHNIQUES: Technique[] = [
-    { name: 'Paradoxo do Conjurador', description: 'Custo: 200. Conjura uma de 10 armas com base em uma pergunta de física. Acertar concede um buff, errar um debuff. Não responder concede a arma neutra com dreno de aura e custo dobrado no próximo uso.', type: TechniqueType.Unica, baseCost: 200, level: TechniqueLevel.Amador },
+    { name: 'Paradoxo do Conjurador', description: 'Custo: 200. Conjura uma de 10 armas. A resposta é validada presencialmente, e o próprio usuário marca no painel se acertou ou errou para aplicar buff ou debuff.', type: TechniqueType.Unica, baseCost: 200, level: TechniqueLevel.Amador },
     { name: 'Equação do Destino', description: 'Custo: 50. Inverte o resultado do Paradoxo. Um buff vira um debuff para o oponente e força seu próximo Paradoxo a ser um buff. Um debuff vira um buff para o oponente e força seu próximo Paradoxo a ser um debuff.', type: TechniqueType.Unica, baseCost: 50, level: TechniqueLevel.Amador },
 ];
 
@@ -200,6 +200,8 @@ export const initialCharacters: Character[] = [
         paradoxState: { isActive: false, question: '', playerAnswer: null, nextUseCostDoubled: false, isEquationOfDestinyActive: false, forceNextBuff: false, forceNextDebuff: false, activeNeutralWeapon: false, selectedEquipment: null, preparedExtraShots: 0 },
         actions: { attacks: 1, totalAttacks: 1 },
         pendingAttack: null,
+        maxAuraMasterBonus: 0,
+        maxHealthMasterBonus: 0,
         maxAuraPermanentBonus: 0,
         maxHealthPermanentBonus: 0,
         absorbedDamageForConversion: 0,
@@ -242,6 +244,8 @@ export const initialCharacters: Character[] = [
         unspentProficiencyPoints: 0,
         actions: { attacks: 1, totalAttacks: 1 },
         pendingAttack: null,
+        maxAuraMasterBonus: 0,
+        maxHealthMasterBonus: 0,
         maxAuraPermanentBonus: 0,
         maxHealthPermanentBonus: 0,
         absorbedDamageForConversion: 0,
@@ -285,6 +289,8 @@ export const initialCharacters: Character[] = [
         unspentProficiencyPoints: 0,
         actions: { attacks: 1, totalAttacks: 1 },
         pendingAttack: null,
+        maxAuraMasterBonus: 0,
+        maxHealthMasterBonus: 0,
         maxAuraPermanentBonus: 0,
         maxHealthPermanentBonus: 0,
         absorbedDamageForConversion: 0,
@@ -328,6 +334,8 @@ export const initialCharacters: Character[] = [
         unspentProficiencyPoints: 0,
         actions: { attacks: 1, totalAttacks: 1 },
         pendingAttack: null,
+        maxAuraMasterBonus: 0,
+        maxHealthMasterBonus: 0,
         maxAuraPermanentBonus: 0,
         maxHealthPermanentBonus: 0,
         absorbedDamageForConversion: 0,
@@ -373,6 +381,8 @@ export const createNewCharacter = (playerId: string, name: string): Character =>
     unspentProficiencyPoints: 0,
     actions: { attacks: 1, totalAttacks: 1 },
     pendingAttack: null,
+    maxAuraMasterBonus: 0,
+    maxHealthMasterBonus: 0,
     maxAuraPermanentBonus: 0,
     maxHealthPermanentBonus: 0,
     absorbedDamageForConversion: 0,

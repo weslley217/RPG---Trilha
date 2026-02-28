@@ -1,6 +1,6 @@
 ﻿
 import React, { useState, useMemo, useEffect } from 'react';
-import { Attribute, User, Character, Proficiency, ParadoxState, Equipment, EffectType, PendingAttack, Effect } from '../types';
+import { Attribute, User, Character, Proficiency, Equipment, EffectType, PendingAttack, Effect } from '../types';
 import { useCharacterContext } from '../context/CharacterContext';
 import CharacterSheet from './CharacterSheet';
 import BestiaryView from './BestiaryView';
@@ -450,7 +450,7 @@ const EquipmentViewer: React.FC = () => {
 }
 
 const MasterControls: React.FC<{ character: Character; onUpdate: (char: Character) => void; }> = ({ character, onUpdate }) => {
-    const { state, dispatch } = useCharacterContext();
+    const { state, dispatch, persistStateNow } = useCharacterContext();
     const [testProficiency, setTestProficiency] = useState<Proficiency>(Proficiency.Resistencia);
     const [testContext, setTestContext] = useState<'Physical' | 'Aura' | 'Mental'>('Physical');
     const [attrPoints, setAttrPoints] = useState(0);
@@ -481,6 +481,9 @@ const MasterControls: React.FC<{ character: Character; onUpdate: (char: Characte
     const [tavernMissionDescription, setTavernMissionDescription] = useState('');
     const [tavernMissionReward, setTavernMissionReward] = useState(0);
     const [tavernSellApprovalValues, setTavernSellApprovalValues] = useState<Record<string, number>>({});
+    const [maxHealthTarget, setMaxHealthTarget] = useState(0);
+    const [maxAuraTarget, setMaxAuraTarget] = useState(0);
+    const [maxStatsMessage, setMaxStatsMessage] = useState('');
 
     const handleRequestTest = () => onUpdate({ ...character, testRequest: { proficiency: testProficiency, testContext: testContext } });
     const handleRequestTestAll = () => {
@@ -509,7 +512,10 @@ const MasterControls: React.FC<{ character: Character; onUpdate: (char: Characte
         setMatheusMasterResult('');
         setMatheusAdditionalDamage(0);
         setMatheusTestOutcome('success');
-    }, [character.id, character.ozyState, character.gabrielState]);
+        setMaxHealthTarget(Rules.calculateBaseMaxHealth(character));
+        setMaxAuraTarget(Rules.calculateBaseMaxAura(character));
+        setMaxStatsMessage('');
+    }, [character]);
     
     const handleGrantPoints = () => {
         onUpdate({ 
@@ -521,11 +527,42 @@ const MasterControls: React.FC<{ character: Character; onUpdate: (char: Characte
         setProfPoints(0);
     };
 
-    const handleParadoxControl = (action: 'correct' | 'incorrect') => {
-        if (!character.paradoxState) return;
-        const updatedParadoxState: ParadoxState = { ...character.paradoxState, outcome: action };
-        const logMessage = `Mestre julgou a resposta de ${character.name} como ${action}.`;
-        onUpdate({ ...character, paradoxState: updatedParadoxState, combatLog: [...character.combatLog, logMessage] });
+    const handleSaveMaxStats = async () => {
+        const targetHealth = Math.max(1, Math.round(maxHealthTarget));
+        const targetAura = Math.max(1, Math.round(maxAuraTarget));
+        const currentBaseHealth = Rules.calculateBaseMaxHealth(character);
+        const currentBaseAura = Rules.calculateBaseMaxAura(character);
+        const nextHealthBonus = (character.maxHealthMasterBonus || 0) + (targetHealth - currentBaseHealth);
+        const nextAuraBonus = (character.maxAuraMasterBonus || 0) + (targetAura - currentBaseAura);
+
+        const updatedCharacter: Character = {
+            ...character,
+            maxHealthMasterBonus: nextHealthBonus,
+            maxAuraMasterBonus: nextAuraBonus,
+            combatLog: [
+                ...character.combatLog,
+                `Mestre redefiniu os máximos base de ${character.name}: Vida ${currentBaseHealth} -> ${targetHealth}, Aura ${currentBaseAura} -> ${targetAura}.`
+            ],
+        };
+
+        const updatedMaxHealth = Rules.calculateMaxHealth(updatedCharacter);
+        const updatedMaxAura = Rules.calculateMaxAura(updatedCharacter);
+        updatedCharacter.currentHealth = Math.min(updatedCharacter.currentHealth, updatedMaxHealth);
+        updatedCharacter.currentAura = Math.min(updatedCharacter.currentAura, updatedMaxAura);
+
+        const nextCharacters = state.characters.map(other =>
+            other.id === character.id ? updatedCharacter : other
+        );
+
+        setMaxStatsMessage('');
+        onUpdate(updatedCharacter);
+
+        try {
+            await persistStateNow({ ...state, characters: nextCharacters });
+            setMaxStatsMessage('Máximos base salvos no Supabase.');
+        } catch (error) {
+            setMaxStatsMessage(error instanceof Error ? error.message : 'Falha ao salvar os máximos no Supabase.');
+        }
     };
 
     const handleDealDamage = () => {
@@ -1234,7 +1271,7 @@ const MasterControls: React.FC<{ character: Character; onUpdate: (char: Characte
         <div className="space-y-6 mt-6">
             <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
                 <h3 className="text-xl font-bold text-green-400 mb-3 text-center">Controles do Mestre para: {character.name}</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-5 gap-4">
                     <div className="bg-gray-900 p-3 rounded-md space-y-2"><h4 className="font-bold text-lg text-center mb-2">Causar Dano</h4>
                         <input type="number" value={damageAmount} onChange={e => setDamageAmount(parseInt(e.target.value) || 0)} className="w-full p-2 bg-gray-700 rounded-md"/>
                         <select value={damageType} onChange={e => setDamageType(e.target.value as any)} className="w-full p-2 bg-gray-700 rounded-md text-sm"><option value="Physical">Físico</option><option value="Aura">Aura</option></select>
@@ -1248,23 +1285,29 @@ const MasterControls: React.FC<{ character: Character; onUpdate: (char: Characte
                         <button onClick={handleRequestTest} className="w-full py-2 bg-green-600 hover:bg-green-700 rounded-md font-semibold transition mt-auto">Solicitar</button>
                         <button onClick={handleRequestTestAll} className="w-full py-2 bg-emerald-700 hover:bg-emerald-800 rounded-md font-semibold transition">Solicitar para Todos</button>
                     </div>
+                    <div className="bg-gray-900 p-3 rounded-md space-y-2">
+                        <h4 className="font-bold text-lg text-center mb-2">Máximos Base</h4>
+                        <p className="text-xs text-gray-400">Defina o novo padrão persistente de Vida e Aura máximas.</p>
+                        <div className="text-xs text-cyan-300">
+                            Exibido agora: Vida {Rules.calculateMaxHealth(character)} | Aura {Rules.calculateMaxAura(character)}
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <label className="flex-1 text-sm">Vida</label>
+                            <input type="number" min={1} value={maxHealthTarget} onChange={e => setMaxHealthTarget(parseInt(e.target.value, 10) || 1)} className="w-28 p-2 bg-gray-700 rounded-md"/>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <label className="flex-1 text-sm">Aura</label>
+                            <input type="number" min={1} value={maxAuraTarget} onChange={e => setMaxAuraTarget(parseInt(e.target.value, 10) || 1)} className="w-28 p-2 bg-gray-700 rounded-md"/>
+                        </div>
+                        <button onClick={handleSaveMaxStats} className="w-full py-2 bg-cyan-600 hover:bg-cyan-700 rounded-md font-semibold transition">Salvar Novos Máximos</button>
+                        {maxStatsMessage && (
+                            <p className={`text-xs ${maxStatsMessage.includes('Falha') ? 'text-red-400' : 'text-emerald-300'}`}>{maxStatsMessage}</p>
+                        )}
+                    </div>
                     <div className="bg-gray-900 p-3 rounded-md space-y-2"><h4 className="font-bold text-lg text-center mb-2">Ações de Turno</h4><button onClick={handleResetActions} className="w-full h-full py-2 bg-blue-600 hover:bg-blue-700 rounded-md font-semibold transition">Resetar Ações</button></div>
                 </div>
             </div>
             <PendingAttacksViewer attackerId={character.id} title={`Validação de Dano: ${character.name}`} showWhenEmpty={true} />
-            {character.paradoxState && character.paradoxState.playerAnswer && character.paradoxState.outcome === 'pending' && (
-                 <div className="bg-gray-800 p-4 rounded-lg border border-yellow-500">
-                    <h3 className="text-lg font-bold text-yellow-400 mb-3">Paradoxo (Validação)</h3>
-                    <div>
-                         <p className="text-gray-400 mb-1">Arma: <span className="text-white font-bold">{character.paradoxState.selectedEquipment?.name}</span></p>
-                         <p className="text-gray-400 mb-2">Resposta: <span className="text-white italic">"{character.paradoxState.playerAnswer}"</span></p>
-                        <div className="flex gap-4">
-                            <button onClick={() => handleParadoxControl('correct')} className="w-full py-2 bg-green-600 hover:bg-green-700 rounded-md">Correto</button>
-                            <button onClick={() => handleParadoxControl('incorrect')} className="w-full py-2 bg-red-600 hover:bg-red-700 rounded-md">Incorreto</button>
-                        </div>
-                    </div>
-                 </div>
-            )}
             {character.ozyState && (
                 <div className="bg-gray-800 p-4 rounded-lg border border-cyan-700 space-y-3">
                     <h3 className="text-lg font-bold text-cyan-300">Aura Expandir / Ego (Ozymandias)</h3>

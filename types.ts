@@ -351,6 +351,8 @@ export interface Character {
     pendingAttack: PendingAttack | null;
     storedDamage?: number; // For Armadura
     activeShield?: { points: number }; // For Escudo Torre
+    maxAuraMasterBonus?: number;
+    maxHealthMasterBonus?: number;
     maxAuraPermanentBonus?: number;
     maxHealthPermanentBonus?: number;
     absorbedDamageForConversion?: number;

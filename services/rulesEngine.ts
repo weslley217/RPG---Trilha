@@ -86,21 +86,32 @@ export const calculateTestModifier = (
 
 // Função obrigatória: calcularAuraMaxima()
 export const calculateMaxAura = (char: Character): number => {
+    return getEffectiveValue(calculateBaseMaxAura(char), char.effects, 'AuraMaxima');
+};
+
+export const calculateBaseMaxAura = (char: Character): number => {
     const mente = getEffectiveAttribute(char, Attribute.Mente);
     const espirito = getEffectiveAttribute(char, Attribute.Espirito);
     const corpo = getEffectiveAttribute(char, Attribute.Corpo);
     let baseMaxAura = (corpo * mente * espirito);
-    
-    // Applying permanent bonuses from Escudo Torre
+
+    if (char.maxAuraMasterBonus) {
+        baseMaxAura += char.maxAuraMasterBonus;
+    }
+
     if (char.maxAuraPermanentBonus) {
         baseMaxAura += char.maxAuraPermanentBonus;
     }
 
-    return getEffectiveValue(baseMaxAura, char.effects, 'AuraMaxima');
+    return Math.max(1, Math.round(baseMaxAura));
 };
 
 // Função obrigatória: calcularVidaMaxima() - REGRA ATUALIZADA
 export const calculateMaxHealth = (char: Character): number => {
+    return getEffectiveValue(calculateBaseMaxHealth(char), char.effects, 'VidaMaxima');
+};
+
+export const calculateBaseMaxHealth = (char: Character): number => {
     const corpoBruto = getEffectiveAttribute(char, Attribute.Corpo);
     const modEspirito = calculateModifier(getEffectiveAttribute(char, Attribute.Espirito));
     const modCorpo = calculateModifier(getEffectiveAttribute(char, Attribute.Corpo));
@@ -116,12 +127,15 @@ export const calculateMaxHealth = (char: Character): number => {
 
     let baseMaxHealth = corpoBruto * effectiveSum;
 
-    // Applying permanent bonuses from Escudo Torre
+    if (char.maxHealthMasterBonus) {
+        baseMaxHealth += char.maxHealthMasterBonus;
+    }
+
     if (char.maxHealthPermanentBonus) {
         baseMaxHealth += char.maxHealthPermanentBonus;
     }
 
-    return getEffectiveValue(baseMaxHealth, char.effects, 'VidaMaxima');
+    return Math.max(1, Math.round(baseMaxHealth));
 };
 
 export const calculateTechniqueCost = (char: Character, technique: Technique): number => {
@@ -292,22 +306,7 @@ export const calculateAuraEnhancedDamage = (char: Character): number => {
 };
 
 export const calculateDamageReduction = (char: Character, damageType: 'Physical' | 'Aura'): { totalReduction: number; baseResist: number; mod: number; attr: Attribute } => {
-    let reductionFromEffects = 0;
-    
-    char.effects.forEach(effect => {
-        if (effect.target === 'DamageReduction') {
-            reductionFromEffects += effect.value;
-        }
-    });
-    
-    // If reduction effects like Ten/Ken are active, they also add mods
-    if (reductionFromEffects > 0) {
-        const espiritoMod = calculateModifier(getEffectiveAttribute(char, Attribute.Espirito));
-        const menteMod = calculateModifier(getEffectiveAttribute(char, Attribute.Mente));
-        const dominio = getEffectiveProficiency(char, Proficiency.DominioDeAura);
-        reductionFromEffects += (espiritoMod + menteMod + dominio);
-    }
-    
+    const reductionFromEffects = getActiveDamageReductionBonus(char);
     const corpoBruto = char.attributes[Attribute.Corpo];
     const corpoMod = calculateModifier(getEffectiveAttribute(char, Attribute.Corpo));
     const resistenciaValue = getEffectiveProficiency(char, Proficiency.Resistencia);
@@ -329,6 +328,26 @@ export const calculateDamageReduction = (char: Character, damageType: 'Physical'
         mod: damageType === 'Physical' ? corpoMod : espiritoMod,
         attr: damageType === 'Physical' ? Attribute.Corpo : Attribute.Espirito,
     };
+};
+
+export const getActiveDamageReductionBonus = (char: Character): number => {
+    let reductionFromEffects = 0;
+
+    char.effects.forEach(effect => {
+        if (effect.target === 'DamageReduction') {
+            reductionFromEffects += effect.value;
+        }
+    });
+
+    if (reductionFromEffects > 0) {
+        const espiritoMod = calculateModifier(getEffectiveAttribute(char, Attribute.Espirito));
+        const menteMod = calculateModifier(getEffectiveAttribute(char, Attribute.Mente));
+        const dominio = getEffectiveProficiency(char, Proficiency.DominioDeAura);
+        reductionFromEffects += (espiritoMod + menteMod + dominio);
+    }
+
+    const { resistanceBonus } = getActiveTechniqueBonuses(char);
+    return reductionFromEffects + resistanceBonus;
 };
 
 const calculateParadoxWeaponDamageBase = (char: Character, physicalDamageValue: number): number | null => {
