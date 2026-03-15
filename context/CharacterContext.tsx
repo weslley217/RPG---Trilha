@@ -3,7 +3,8 @@ import React, { createContext, useReducer, useContext, useEffect, useRef, useSta
 import { Attribute, BestiaryState, Character, Effect, Equipment, EffectType, PendingAttack, Proficiency, Technique } from '../types';
 import { initialCharacters, PARADOX_EQUIPMENT } from '../constants';
 import * as Rules from '../services/rulesEngine';
-import { loadOrSeedCampaignState, PersistedAppState, saveCampaignState } from '../services/supabaseStore';
+import { getCampaignRealtimeTargets, loadOrSeedCampaignState, PersistedAppState, saveCampaignState } from '../services/supabaseStore';
+import { supabase } from '../services/supabaseClient';
 
 type AppState = {
     characters: Character[];
@@ -147,6 +148,18 @@ const sanitizeBestiaryState = (bestiary?: Partial<BestiaryState>): BestiaryState
             createdAt: note.createdAt || Date.now(),
         })),
     };
+};
+
+const buildStateSignature = (state: PersistedAppState): string => {
+    return JSON.stringify({
+        characters: state.characters,
+        equipment: state.equipment,
+        bestiary: state.bestiary,
+        turnCount: state.turnCount,
+        currentDay: state.currentDay,
+        turnOrder: state.turnOrder,
+        activeCharacterIndex: state.activeCharacterIndex,
+    });
 };
 
 const appReducer = (state: AppState, action: Action): AppState => {
@@ -484,6 +497,10 @@ export const CharacterProvider: React.FC<{ children: ReactNode }> = ({ children 
     const [isHydrated, setIsHydrated] = useState(false);
     const [syncError, setSyncError] = useState<string | null>(null);
     const saveTimeoutRef = useRef<number | null>(null);
+    const realtimeRefreshTimeoutRef = useRef<number | null>(null);
+    const isRealtimeSyncInFlightRef = useRef(false);
+    const skipNextAutoSaveRef = useRef(false);
+    const lastStateSignatureRef = useRef('');
 
     const normalizeLoadedState = (loaded: Partial<PersistedAppState>): AppState => {
         const loadedCharacters = Array.isArray(loaded.characters) ? loaded.characters : [];
@@ -602,13 +619,16 @@ export const CharacterProvider: React.FC<{ children: ReactNode }> = ({ children 
             try {
                 const persistedState = await loadOrSeedCampaignState();
                 if (isCancelled) return;
-                dispatch({ type: 'HYDRATE_STATE', payload: normalizeLoadedState(persistedState) });
+                const normalizedState = normalizeLoadedState(persistedState);
+                lastStateSignatureRef.current = buildStateSignature(normalizedState);
+                dispatch({ type: 'HYDRATE_STATE', payload: normalizedState });
                 setSyncError(null);
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Erro ao carregar dados da campanha no Supabase.';
                 console.error(message);
                 if (isCancelled) return;
                 setSyncError(message);
+                lastStateSignatureRef.current = buildStateSignature(emptyState);
                 dispatch({ type: 'HYDRATE_STATE', payload: emptyState });
             } finally {
                 if (!isCancelled) {
@@ -626,6 +646,16 @@ export const CharacterProvider: React.FC<{ children: ReactNode }> = ({ children 
 
     useEffect(() => {
         if (!isHydrated) return;
+        lastStateSignatureRef.current = buildStateSignature(state);
+    }, [state, isHydrated]);
+
+    useEffect(() => {
+        if (!isHydrated) return;
+
+        if (skipNextAutoSaveRef.current) {
+            skipNextAutoSaveRef.current = false;
+            return;
+        }
 
         if (saveTimeoutRef.current) {
             window.clearTimeout(saveTimeoutRef.current);
@@ -649,6 +679,89 @@ export const CharacterProvider: React.FC<{ children: ReactNode }> = ({ children 
         };
     }, [state, isHydrated]);
 
+    useEffect(() => {
+        if (!isHydrated) return;
+
+        let isCancelled = false;
+        const realtimeTargets = getCampaignRealtimeTargets();
+        if (realtimeTargets.length === 0) return;
+
+        const channel = supabase.channel(`campaign-state-sync-${Date.now()}`);
+
+        const refreshFromRemote = async () => {
+            if (isCancelled || isRealtimeSyncInFlightRef.current) return;
+            isRealtimeSyncInFlightRef.current = true;
+
+            try {
+                const persistedState = await loadOrSeedCampaignState();
+                if (isCancelled) return;
+
+                const normalizedState = normalizeLoadedState(persistedState);
+                const remoteSignature = buildStateSignature(normalizedState);
+                if (remoteSignature === lastStateSignatureRef.current) {
+                    return;
+                }
+
+                skipNextAutoSaveRef.current = true;
+                lastStateSignatureRef.current = remoteSignature;
+                dispatch({ type: 'HYDRATE_STATE', payload: normalizedState });
+                setSyncError(null);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Erro ao sincronizar mudancas remotas da campanha.';
+                console.error(message);
+                if (!isCancelled) {
+                    setSyncError(message);
+                }
+            } finally {
+                isRealtimeSyncInFlightRef.current = false;
+            }
+        };
+
+        const scheduleRemoteRefresh = () => {
+            if (realtimeRefreshTimeoutRef.current) {
+                window.clearTimeout(realtimeRefreshTimeoutRef.current);
+            }
+
+            realtimeRefreshTimeoutRef.current = window.setTimeout(() => {
+                void refreshFromRemote();
+            }, 250);
+        };
+
+        realtimeTargets.forEach(target => {
+            channel.on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: target.table,
+                    filter: target.filter,
+                },
+                scheduleRemoteRefresh
+            );
+        });
+
+        channel.subscribe((status) => {
+            if (status === 'CHANNEL_ERROR') {
+                const message = 'Erro ao assinar realtime da campanha no Supabase.';
+                console.error(message);
+                if (!isCancelled) {
+                    setSyncError(message);
+                }
+            }
+        });
+
+        return () => {
+            isCancelled = true;
+
+            if (realtimeRefreshTimeoutRef.current) {
+                window.clearTimeout(realtimeRefreshTimeoutRef.current);
+                realtimeRefreshTimeoutRef.current = null;
+            }
+
+            void supabase.removeChannel(channel);
+        };
+    }, [isHydrated]);
+
     const persistStateNow = async (nextState?: PersistedAppState): Promise<void> => {
         if (saveTimeoutRef.current) {
             window.clearTimeout(saveTimeoutRef.current);
@@ -659,6 +772,7 @@ export const CharacterProvider: React.FC<{ children: ReactNode }> = ({ children 
 
         try {
             await saveCampaignState(stateToPersist);
+            lastStateSignatureRef.current = buildStateSignature(stateToPersist);
             setSyncError(null);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Erro ao sincronizar estado da campanha no Supabase.';
